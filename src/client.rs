@@ -192,7 +192,7 @@ impl Client {
         self.send_async_impl(request)
     }
 
-    fn send_async_impl<B: Into<Body>>(&self, request: Request<B>) -> impl Future<Item=Response<Body>, Error=Error> {
+    fn send_async_impl<B: Into<Body>>(&self, request: Request<B>) -> impl Future<Output=Result<Response<Body>, Error>> {
         let mut request = request.map(Into::into);
 
         // Set default user agent if not specified.

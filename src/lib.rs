@@ -146,6 +146,8 @@
 //! [libcurl]: https://curl.haxx.se/libcurl/
 //! [log]: https://docs.rs/log
 
+#![feature(futures_api)]
+
 pub mod body;
 pub mod client;
 pub mod error;
