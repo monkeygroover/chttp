@@ -11,7 +11,7 @@ use futures::future::Future;
 use futures::channel::oneshot;
 use futures::executor;
 use futures::task::{Poll, Context, AtomicWaker};
-use futures_util::future::FutureExt;
+use futures::future::FutureExt;
 use http::{Request, Response};
 use lazycell::AtomicLazyCell;
 use log::*;
