@@ -6,15 +6,16 @@ use crate::internal::format_byte_string;
 use crate::internal::parse;
 use crate::options::*;
 use curl::easy::InfoType;
+use futures::prelude::*;
 use futures::channel::oneshot;
 use futures::executor;
-use futures::task::{Poll, Waker, AtomicWaker};
-use futures::prelude::*;
+use futures::task::{Poll, Context, AtomicWaker};
 use http::{Request, Response};
 use lazycell::AtomicLazyCell;
 use log::*;
 use std::io::{self, Read};
 use std::mem;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::*;
 
@@ -111,7 +112,7 @@ pub fn create<B: Into<Body>>(request: Request<B>, options: &Options) -> Result<(
 
     let mut headers = curl::easy::List::new();
     for (name, value) in request_parts.headers.iter() {
-        let header = format!("{}: {}", name.as_str(), value.to_str().unwrap());
+        let header = format!("{}: {}", name.as_str(), value.to_str()?);
         headers.append(&header)?;
     }
     easy.http_headers(headers)?;
@@ -130,9 +131,8 @@ pub fn create<B: Into<Body>>(request: Request<B>, options: &Options) -> Result<(
     }
 
     let future_rx = future_rx.then(|result| match result {
-        Ok(Ok(response)) => Ok(response),
-        Ok(Err(e)) => Err(e),
-        Err(oneshot::Canceled) => {
+        Ok(result) => result,
+        Err(_) => {
             error!("request canceled by agent; this should never happen!");
             Err(Error::Canceled)
         },
@@ -422,19 +422,19 @@ pub struct CurlResponseStream {
 // Synchronous wrapper around async stream.
 impl io::Read for CurlResponseStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        executor::block_on(AsyncReadExt::read(self, buf).map(|r| r.2))
+        executor::block_on(AsyncReadExt::read(self, buf))
     }
 
     fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        executor::block_on(AsyncReadExt::read_exact(self, buf).map(|_| ()))
+        executor::block_on(AsyncReadExt::read_exact(self, buf))
     }
 
     fn read_to_end(&mut self, dest: &mut Vec<u8>) -> io::Result<usize> {
         let mut buf = Vec::new();
         mem::swap(&mut buf, dest);
 
-        match executor::block_on(AsyncReadExt::read_to_end(self, buf)) {
-            Ok((_, buf)) => {
+        match executor::block_on(AsyncReadExt::read_to_end(self, &mut buf)) {
+            Ok(()) => {
                 *dest = buf;
                 Ok(dest.len())
             },
@@ -444,7 +444,7 @@ impl io::Read for CurlResponseStream {
 }
 
 impl AsyncRead for CurlResponseStream {
-    fn poll_read(&mut self, waker: &Waker, dest: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(self: Pin<&mut Self>, ctx: &mut Context, dest: &mut [u8]) -> Poll<io::Result<usize>> {
         trace!("received read request for {} bytes", dest.len());
 
         if dest.is_empty() {
@@ -452,7 +452,7 @@ impl AsyncRead for CurlResponseStream {
         }
 
         // Set the current read waker.
-        self.state.read_waker.register(waker);
+        self.state.read_waker.register(ctx.waker());
 
         // Attempt to read some from the buffer.
         let mut buffer = self.state.buffer.lock().unwrap();
@@ -460,7 +460,7 @@ impl AsyncRead for CurlResponseStream {
         // If the request failed, return an error.
         if let Some(error) = self.state.error.borrow() {
             debug!("failing read due to error: {:?}", error);
-            return Err(error.clone().into());
+            return Poll::Ready(Err(error.clone().into()));
         }
 
         // If data is available, read some.
@@ -488,7 +488,7 @@ impl AsyncRead for CurlResponseStream {
         }
 
         trace!("buffer is empty, read is pending");
-        Poll::Pending;
+        Poll::Pending
     }
 }
 
