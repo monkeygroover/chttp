@@ -6,10 +6,12 @@ use crate::internal::format_byte_string;
 use crate::internal::parse;
 use crate::options::*;
 use curl::easy::InfoType;
-use futures::prelude::*;
+use futures::io::{AsyncRead, AsyncReadExt};
+use futures::future::Future;
 use futures::channel::oneshot;
 use futures::executor;
 use futures::task::{Poll, Context, AtomicWaker};
+use futures_util::future::FutureExt;
 use http::{Request, Response};
 use lazycell::AtomicLazyCell;
 use log::*;
@@ -112,7 +114,7 @@ pub fn create<B: Into<Body>>(request: Request<B>, options: &Options) -> Result<(
 
     let mut headers = curl::easy::List::new();
     for (name, value) in request_parts.headers.iter() {
-        let header = format!("{}: {}", name.as_str(), value.to_str()?);
+        let header = format!("{}: {}", name.as_str(), value.to_str().unwrap());
         headers.append(&header)?;
     }
     easy.http_headers(headers)?;
